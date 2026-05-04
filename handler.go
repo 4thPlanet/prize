@@ -42,7 +42,7 @@ func NewTypedHandler[S middleware.Session, T any](sessionInit func() S, fn func(
 		data.Data = fn(r)
 		return data
 	})
-	mux.logFormat = "%h %l %u %t \"%r\" %s %b"
+	mux.logFormat = "%h %l %u %t \"%r\" %s %b\n"
 	mux.logger = log.Default().Writer()
 	mux.errorHandler = middleware.Errors[*HandlerData[S, T], int]()
 	mux.sessionInit = sessionInit

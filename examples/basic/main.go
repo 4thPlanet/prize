@@ -34,8 +34,6 @@ func (s Session) Id() string {
 	s["id"] = base64.StdEncoding.EncodeToString(buf[:])
 	return s["id"].(string)
 }
-func (s Session) Load(r *http.Request) {}
-func (s Session) Save(r *http.Request) {}
 
 type Request struct {
 	r    *http.Request
