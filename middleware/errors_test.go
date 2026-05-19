@@ -40,16 +40,23 @@ func TestErrors(t *testing.T) {
 		{"custom-panic", Errors[*mockRequest, ErrorPage]()(ctn, io.Discard), true, []byte(http.StatusText(http.StatusInternalServerError))},
 	} {
 		t.Run(test.Name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/", nil)
-			res := httptest.NewRecorder()
-			test.Handler(res, &mockRequest{r: req}, func(w http.ResponseWriter, r *mockRequest, _ dispatch.Middleware[*mockRequest]) {
+			handler := dispatch.NewTypedHandler(func(r *http.Request) *mockRequest {
+				return &mockRequest{r: r}
+			})
+			handler.HandleFunc("/", func(w http.ResponseWriter, r *mockRequest) {
 				if test.Panics {
 					var n *int
 					*n = *n + 5
 				} else {
 					w.Write(testBody)
 				}
+
 			})
+			handler.UseMiddleware(test.Handler)
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			res := httptest.NewRecorder()
+			handler.ServeHTTP(res, req)
+
 			expectedCode := http.StatusOK
 			if test.Panics {
 				expectedCode = http.StatusInternalServerError

@@ -9,12 +9,15 @@ import (
 	"github.com/4thPlanet/dispatch"
 )
 
+const testSessionCookieName = "sid"
+
 func TestDefaultSessionStore(t *testing.T) {
-	store := new(DefaultSessionStore[*testSession])
+
+	store := NewDefaultSessionStore[*testSession](testSessionCookieName)
 	// req1: brand new session
 	req1 := httptest.NewRequest(http.MethodGet, "/", nil)
 	res := httptest.NewRecorder()
-	session := store.GetSession(req1, initFunc)
+	session := store.Load(req1)
 	if got, want := session.Num, 0; got != want {
 		t.Errorf("Unexpected initial Num value. Got %v, Want %v", got, want)
 	}
@@ -25,9 +28,9 @@ func TestDefaultSessionStore(t *testing.T) {
 	store.WriteCookie(res, session)
 	cookies := res.Result().Cookies()
 	if got, want := len(cookies), 1; got != want {
-		t.Errorf("Unexpected number of cookies returned. Got %v, Want %v", got, want)
+		t.Fatalf("Unexpected number of cookies returned. Got %v, Want %v", got, want)
 	}
-	if got, want := cookies[0].Name, "session_id"; got != want {
+	if got, want := cookies[0].Name, testSessionCookieName; got != want {
 		t.Errorf("Unexpected session cookie name. Got %v, Want %v", got, want)
 	}
 	if got, want := cookies[0].Value, session.Id(); got != want {
@@ -37,29 +40,37 @@ func TestDefaultSessionStore(t *testing.T) {
 	// req2: Use cookie from req1
 	req2 := httptest.NewRequest(http.MethodGet, "/", nil)
 	req2.AddCookie(cookies[0])
-	session2 := store.GetSession(req2, initFunc)
-	if got, want := session2.Id(), session.Id(); got != want {
-		t.Errorf("Unexpected session id returned. Got %v, Want %v", got, want)
-	}
+	session2 := store.Load(req2)
 	if got, want := session2.Num, session.Num; got != want {
 		t.Errorf("Unexpected session Num returned. Got %v, Want %v", got, want)
 	}
 }
 func TestSessionMW(t *testing.T) {
-	sessionRecorder := SessionMW[*testSession, *mockRequest](new(DefaultSessionStore[*testSession]), initFunc, io.Discard)
+	sessionRecorder := SessionMW[*testSession, *mockRequest](NewDefaultSessionStore[*testSession]("sid"), io.Discard)
+	var num int
+	handler := dispatch.NewTypedHandler(func(r *http.Request) *mockRequest {
+		return &mockRequest{
+			r: r,
+		}
+	})
+	handler.HandleFunc("/", func(w http.ResponseWriter, r *mockRequest) {
+		w.Write(testBody)
+		r.S.Num++
+		if got, want := r.S.Num, num+1; got != want {
+			t.Errorf("Unexpected session Num. Got %v, Want %v", got, want)
+		}
+	})
+	handler.UseMiddleware(sessionRecorder)
+
 	var cookie *http.Cookie
-	for num := range 5 {
+	for num = range 5 {
+		t.Logf("Num = %d", num)
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		if cookie != nil {
 			req.AddCookie(cookie)
 		}
 		res := httptest.NewRecorder()
-		sessionRecorder(res, &mockRequest{r: req}, func(w http.ResponseWriter, r *mockRequest, _ dispatch.Middleware[*mockRequest]) {
-			r.S.Num++
-			if got, want := r.S.Num, num+1; got != want {
-				t.Errorf("Unexpected session Num. Got %v, Want %v", got, want)
-			}
-		})
+		handler.ServeHTTP(res, req)
 		cookies := res.Result().Cookies()
 		if got, want := len(cookies), 1; got != want {
 			t.Fatalf("Unexpected number of cookies returned. Got %v, Want %v", got, want)

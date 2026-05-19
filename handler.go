@@ -17,36 +17,47 @@ type TypedHandler[S middleware.Session, T any] struct {
 	ctn          *dispatch.ContentTypeNegotiator
 	encoders     []middleware.ContentEncoder
 	sessionStore middleware.SessionStore[S]
-	sessionInit  func() S
 }
 
 type HandlerData[S middleware.Session, T any] struct {
-	r       *http.Request
-	Data    T
-	Session S
+	r            *http.Request
+	Data         T
+	session      S
+	logData      *middleware.LoggerData
+	encodingData *middleware.EncodingData
 }
 
 func (d *HandlerData[S, T]) Request() *http.Request {
 	return d.r
 }
-
-func (d *HandlerData[S, T]) LoadSession(session S) {
-	d.Session = session
+func (d *HandlerData[S, T]) GetSession() S {
+	return d.session
+}
+func (d *HandlerData[S, T]) SetSession(session S) {
+	d.session = session
+}
+func (d *HandlerData[S, T]) Log() *middleware.LoggerData {
+	return d.logData
 }
 
-func NewTypedHandler[S middleware.Session, T any](sessionInit func() S, fn func(*http.Request) T) *TypedHandler[S, T] {
+func (d *HandlerData[S, T]) Encoder() *middleware.EncodingData {
+	return d.encodingData
+}
+
+func NewTypedHandler[S middleware.Session, T any](fn func(*http.Request) T) *TypedHandler[S, T] {
 	mux := new(TypedHandler[S, T])
 	mux.TypedHandler = dispatch.NewTypedHandler(func(r *http.Request) *HandlerData[S, T] {
 		data := new(HandlerData[S, T])
 		data.r = r
+		data.logData = new(middleware.LoggerData)
+		data.encodingData = new(middleware.EncodingData)
 		data.Data = fn(r)
 		return data
 	})
 	mux.logFormat = "%h %l %u %t \"%r\" %s %b\n"
 	mux.logger = log.Default().Writer()
 	mux.errorHandler = middleware.Errors[*HandlerData[S, T], int]()
-	mux.sessionInit = sessionInit
-	mux.sessionStore = new(middleware.DefaultSessionStore[S])
+	mux.sessionStore = middleware.NewDefaultSessionStore[S]("sid")
 	return mux
 }
 
@@ -64,8 +75,8 @@ func (mux *TypedHandler[S, T]) UseContentEncoders(encs ...middleware.ContentEnco
 	mux.encoders = encs
 }
 
-func (mux *TypedHandler[S, T]) UseSessionStore(store middleware.SessionStore[S], init func() S) {
-	mux.sessionInit = init
+func (mux *TypedHandler[S, T]) UseSessionStore(store middleware.SessionStore[S]) {
+	mux.sessionStore = store
 }
 
 func (mux *TypedHandler[S, T]) UseMiddleware(mws ...dispatch.Middleware[*HandlerData[S, T]]) {
@@ -75,7 +86,7 @@ func (mux *TypedHandler[S, T]) UseMiddleware(mws ...dispatch.Middleware[*Handler
 		middleware.Logger[*HandlerData[S, T]](mux.logFormat, mux.logger),
 		//		middleware.Errors[*HandlerData[S, T], int](mux.ctn, mux.logger),
 		mux.errorHandler.Self()(mux.ctn, mux.logger),
-		middleware.SessionMW[S, *HandlerData[S, T]](mux.sessionStore, mux.sessionInit, mux.logger),
+		middleware.SessionMW[S, *HandlerData[S, T]](mux.sessionStore, mux.logger),
 		middleware.ContentEncoding[*HandlerData[S, T]](mux.encoders...),
 	}
 

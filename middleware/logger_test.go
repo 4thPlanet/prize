@@ -210,13 +210,18 @@ func (l *mockLogger) Printf(format string, args ...any) {
 
 func TestLogger(t *testing.T) {
 	buf := &mockLogger{Buffer: new(bytes.Buffer)}
-	logger := Logger[*mockRequest]("%m %I %b %s", buf)
-	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewBuffer(make([]byte, 100)))
-	res := httptest.NewRecorder()
-	logger(res, &mockRequest{r: req}, func(w http.ResponseWriter, r *mockRequest, next dispatch.Middleware[*mockRequest]) {
+	handler := dispatch.NewTypedHandler(func(r *http.Request) *mockRequest {
+		return &mockRequest{r: r}
+	})
+	handler.HandleFunc("/", func(w http.ResponseWriter, r *mockRequest) {
 		w.WriteHeader(http.StatusTeapot)
 		w.Write(testBody)
 	})
+	handler.UseMiddleware(Logger[*mockRequest]("%m %I %b %s", buf))
+
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewBuffer(make([]byte, 100)))
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
 
 	// Confirm buf.Buffer contains request body size + response body size
 	if got, want := buf.String(), fmt.Sprintf("%s %d %d %d", http.MethodPost, 100, len(testBody), http.StatusTeapot); got != want {

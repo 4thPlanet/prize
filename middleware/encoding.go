@@ -52,6 +52,7 @@ func (ew *encodingWriter) reset(w http.ResponseWriter) {
 type ContentEncoder interface {
 	Name() string
 	Create(io.Writer) io.Writer
+	Pool() *sync.Pool
 }
 
 type acceptedEncoding struct {
@@ -64,8 +65,24 @@ type WriteFlusher interface {
 	Flush() error
 }
 
+type DispatchEncoder interface {
+	dispatch.RequestAdapter
+	Encoder() *EncodingData
+}
+
+type EncodingData struct {
+	wrappedWriter *encodingWriter
+	encoding      io.Writer
+	pool          *sync.Pool
+}
+
+type encodingMW[R DispatchEncoder] struct {
+	providers    map[string]func(w http.ResponseWriter) (io.Writer, *sync.Pool)
+	encodingPool sync.Pool
+}
+
 // This function strongly borrows from github.com/4thPlanet/dispatch/content_type.go::negotiateContentType. However it's much simpler as reflection isn't needed, and subtypes + specificity are not required for consideration.
-func negotiateEncoding(acceptHeader string, providers map[string]func(w http.ResponseWriter) io.Writer) string {
+func (mw *encodingMW[R]) negotiateEncoding(acceptHeader string) string {
 	if len(acceptHeader) == 0 {
 		acceptHeader = "identity"
 	}
@@ -76,7 +93,7 @@ func negotiateEncoding(acceptHeader string, providers map[string]func(w http.Res
 
 		found := false
 		var acceptedEncoding = acceptedEncoding{encoding: qualitySplit[0]}
-		for provider := range providers {
+		for provider := range mw.providers {
 			if qualitySplit[0] == provider {
 				found = true
 				break
@@ -111,57 +128,89 @@ func negotiateEncoding(acceptHeader string, providers map[string]func(w http.Res
 	return highestWeighted.encoding
 }
 
-func ContentEncoding[R dispatch.RequestAdapter](withProviders ...ContentEncoder) dispatch.Middleware[R] {
-	writerPool := sync.Pool{
-		New: func() any {
-			return new(encodingWriter)
-		},
+func (mw *encodingMW[R]) Enter(w http.ResponseWriter, r R) (http.ResponseWriter, R, bool) {
+	data := r.Encoder()
+
+	acceptedEncoding := mw.negotiateEncoding(r.Request().Header.Get("Accept-Encoding"))
+	if acceptedEncoding == "" {
+		w.WriteHeader(http.StatusNotAcceptable)
+		return w, r, false
+	}
+	data.wrappedWriter = mw.encodingPool.Get().(*encodingWriter)
+	wrappedWriter := data.wrappedWriter
+	wrappedWriter.reset(w)
+	w.Header().Set("Content-Encoding", acceptedEncoding)
+	fn := mw.providers[acceptedEncoding]
+	encoding, pool := fn(w)
+	data.pool = pool
+
+	wrappedWriter.write = encoding.Write
+	if f, ok := encoding.(http.Flusher); ok {
+		wrappedWriter.flush = f.Flush
+	} else if f, ok := encoding.(WriteFlusher); ok {
+		wrappedWriter.flush = func() { _ = f.Flush() }
 	}
 
-	allProviders := map[string]func(w http.ResponseWriter) io.Writer{
-		"gzip": func(w http.ResponseWriter) io.Writer {
-			return gzip.NewWriter(w)
+	data.encoding = encoding
+
+	return wrappedWriter, r, true
+}
+func (mw *encodingMW[R]) Exit(w http.ResponseWriter, r R) {
+	data := r.Encoder()
+	defer mw.encodingPool.Put(data.wrappedWriter)
+	if data.pool != nil {
+		defer data.pool.Put(data.encoding)
+	}
+	if c, ok := data.encoding.(io.Closer); ok && data.encoding != w {
+		defer c.Close()
+	}
+
+	if data.wrappedWriter.flush != nil {
+		defer data.wrappedWriter.flush()
+	}
+}
+
+func ContentEncoding[R DispatchEncoder](withProviders ...ContentEncoder) dispatch.Middleware[R] {
+	gzipPool := &sync.Pool{
+		New: func() any {
+			return new(gzip.Writer)
 		},
-		"deflate": func(w http.ResponseWriter) io.Writer {
-			encoding, _ := flate.NewWriter(w, flate.DefaultCompression)
-			return encoding
+	}
+	deflatePool := &sync.Pool{
+		New: func() any {
+			writer, _ := flate.NewWriter(nil, flate.DefaultCompression)
+			return writer
 		},
-		"identity": func(w http.ResponseWriter) io.Writer {
-			return w
+	}
+	allProviders := map[string]func(w http.ResponseWriter) (io.Writer, *sync.Pool){
+		"gzip": func(w http.ResponseWriter) (io.Writer, *sync.Pool) {
+			writer := gzipPool.Get().(*gzip.Writer)
+			writer.Reset(w)
+			return writer, gzipPool
+		},
+		"deflate": func(w http.ResponseWriter) (io.Writer, *sync.Pool) {
+			writer := deflatePool.Get().(*flate.Writer)
+			writer.Reset(w)
+			return writer, deflatePool
+		},
+		"identity": func(w http.ResponseWriter) (io.Writer, *sync.Pool) {
+			return w, nil
 		},
 	}
 	for _, provider := range withProviders {
-		allProviders[provider.Name()] = func(w http.ResponseWriter) io.Writer {
+		allProviders[provider.Name()] = func(w http.ResponseWriter) (io.Writer, *sync.Pool) {
 			encoding := provider.Create(w)
-			return encoding
+			return encoding, provider.Pool()
 		}
 	}
 
-	return func(w http.ResponseWriter, r R, next dispatch.Middleware[R]) {
-		acceptedEncoding := negotiateEncoding(r.Request().Header.Get("Accept-Encoding"), allProviders)
-		if acceptedEncoding == "" {
-			w.WriteHeader(http.StatusNotAcceptable)
-			return
-		}
-		wrappedWriter := writerPool.Get().(*encodingWriter)
-		wrappedWriter.reset(w)
-		defer writerPool.Put(wrappedWriter)
-		w.Header().Set("Content-Encoding", acceptedEncoding)
-		fn := allProviders[acceptedEncoding]
-		encoding := fn(w)
-		wrappedWriter.write = encoding.Write
-		if f, ok := encoding.(http.Flusher); ok {
-			wrappedWriter.flush = f.Flush
-		} else if f, ok := encoding.(WriteFlusher); ok {
-			wrappedWriter.flush = func() { _ = f.Flush() }
-		}
-		if c, ok := encoding.(io.Closer); ok && encoding != w {
-			defer c.Close()
-		}
-
-		if wrappedWriter.flush != nil {
-			defer wrappedWriter.flush()
-		}
-		next(wrappedWriter, r, next)
+	mw := &encodingMW[R]{
+		providers: allProviders,
+		encodingPool: sync.Pool{
+			New: func() any {
+				return new(encodingWriter)
+			},
+		},
 	}
+	return mw
 }

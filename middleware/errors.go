@@ -24,6 +24,26 @@ func (err errorHandler[R, E]) Self() func(ctn *dispatch.ContentTypeNegotiator, l
 	return err
 }
 
+type errorMW[R dispatch.RequestAdapter, E ~int] struct {
+	logger  io.Writer
+	handler func(http.ResponseWriter, R)
+}
+
+func (mw *errorMW[R, E]) Enter(w http.ResponseWriter, r R) (http.ResponseWriter, R, bool) {
+	return w, r, true
+}
+func (mw *errorMW[R, E]) Exit(w http.ResponseWriter, r R) {
+	if re := recover(); re != nil {
+		fmt.Fprintf(mw.logger, "Recovering from panic! %v", re)
+		fmt.Fprintf(mw.logger, "Stack: %s", debug.Stack())
+		if mw.handler == nil {
+			w.WriteHeader(http.StatusInternalServerError)
+		} else {
+			mw.handler(w, r)
+		}
+	}
+}
+
 // Factory function to create an error handler middleware
 func Errors[R dispatch.RequestAdapter, E ~int]() errorHandler[R, E] {
 
@@ -32,25 +52,13 @@ func Errors[R dispatch.RequestAdapter, E ~int]() errorHandler[R, E] {
 			return new(E(http.StatusInternalServerError)), nil
 		}
 
-		errorHandler := errorContentTypeHandler.AsTypedHandler(ctn, logger)
-
-		handlePanic := func(w http.ResponseWriter, r R) {
-			if re := recover(); re != nil {
-
-				fmt.Fprintf(logger, "Recovering from panic! %v", re)
-				fmt.Fprintf(logger, "Stack: %s", debug.Stack())
-				if ctn == nil {
-					w.WriteHeader(http.StatusInternalServerError)
-				} else {
-					errorHandler(w, r)
-				}
-			}
+		mw := &errorMW[R, E]{
+			logger: logger,
 		}
-
-		return func(w http.ResponseWriter, r R, next dispatch.Middleware[R]) {
-			defer handlePanic(w, r)
-			next(w, r, next)
+		if ctn != nil {
+			mw.handler = errorContentTypeHandler.AsTypedHandler(ctn, logger)
 		}
+		return mw
 	}
 
 }

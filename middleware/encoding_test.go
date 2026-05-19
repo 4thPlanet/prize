@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"sync"
 	"testing"
 
 	"github.com/4thPlanet/dispatch"
@@ -32,6 +33,7 @@ func (enc CustomEncoder) Create(in io.Writer) io.Writer {
 	out.Writer = in
 	return out
 }
+func (enc CustomEncoder) Pool() *sync.Pool { return nil }
 
 func TestEncoding(t *testing.T) {
 
@@ -92,13 +94,18 @@ func TestEncoding(t *testing.T) {
 					req := httptest.NewRequest(http.MethodGet, "/", nil)
 					req.Header.Set("Accept-Encoding", test.AcceptEncoding)
 					res := httptest.NewRecorder()
-					encoder(res, &mockRequest{r: req}, func(w http.ResponseWriter, r *mockRequest, _ dispatch.Middleware[*mockRequest]) {
+					handler := dispatch.NewTypedHandler(func(r *http.Request) *mockRequest {
+						return &mockRequest{r: r}
+					})
+					handler.HandleFunc("/", func(w http.ResponseWriter, r *mockRequest) {
 						w.Header().Set("Transfer-Encoding", "chunked")
 						for _, b := range testBody {
 							w.Write([]byte{b})
 							w.(http.Flusher).Flush()
 						}
 					})
+					handler.UseMiddleware(encoder)
+					handler.ServeHTTP(res, req)
 
 					if got, want := res.Code, test.Code; got != want {
 						t.Errorf("Unexpected response code. Got: %v, Want: %v", got, want)

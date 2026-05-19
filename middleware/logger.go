@@ -82,21 +82,20 @@ func (bsr *bodySizeReader) Close() error {
 // Creates a log entry using apache-style directives. Any value derived from such a directive will be json-encoded.
 // An unrecognized directive will be rendered literally (e.g., %z will be rendered as "%z" and not an empty string)
 // See https://httpd.apache.org/docs/2.4/mod/mod_log_config.html#formats for supported directives
-func logBuilder(format string, r *http.Request, w *writerLog, requestTime time.Time, requestDuration time.Duration) string {
+var paramDirectiveRegex = regexp.MustCompile(`^\{(\S+)\}(\w)`)
+var directiveMap map[byte]func(*http.Request, *writerLog, time.Time, time.Duration) string
 
-	var sb strings.Builder
-	paramDirectiveRegex := regexp.MustCompile(`^\{(\S+)\}(\w)`)
-
-	directiveMap := map[byte]func(*http.Request, *writerLog, time.Time) string{
-		'%': func(r *http.Request, wl *writerLog, t time.Time) string { return "%" },
-		'a': func(r *http.Request, wl *writerLog, t time.Time) string {
+func init() {
+	directiveMap = map[byte]func(*http.Request, *writerLog, time.Time, time.Duration) string{
+		'%': func(r *http.Request, wl *writerLog, t time.Time, _ time.Duration) string { return "%" },
+		'a': func(r *http.Request, wl *writerLog, t time.Time, _ time.Duration) string {
 			addr := r.RemoteAddr
 			if ip, _, err := net.SplitHostPort(addr); err == nil {
 				return ip
 			}
 			return addr
 		},
-		'A': func(r *http.Request, wl *writerLog, t time.Time) string {
+		'A': func(r *http.Request, wl *writerLog, t time.Time, _ time.Duration) string {
 			if addr, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok {
 				if ip, _, err := net.SplitHostPort(addr.String()); err == nil {
 					return ip
@@ -105,25 +104,25 @@ func logBuilder(format string, r *http.Request, w *writerLog, requestTime time.T
 			}
 			return "-"
 		},
-		'b': func(r *http.Request, wl *writerLog, t time.Time) string {
+		'b': func(r *http.Request, wl *writerLog, t time.Time, _ time.Duration) string {
 			if wl.length == 0 {
 				return "-"
 			}
 			return strconv.FormatInt(int64(wl.length), 10)
 		},
-		'B': func(r *http.Request, wl *writerLog, t time.Time) string {
+		'B': func(r *http.Request, wl *writerLog, t time.Time, _ time.Duration) string {
 			return strconv.FormatInt(int64(wl.length), 10)
 		},
-		'D': func(r *http.Request, wl *writerLog, t time.Time) string {
+		'D': func(r *http.Request, wl *writerLog, t time.Time, requestDuration time.Duration) string {
 			return strconv.FormatInt(requestDuration.Microseconds(), 10)
 		},
-		'H': func(r *http.Request, wl *writerLog, t time.Time) string { return r.Proto },
-		'I': func(r *http.Request, wl *writerLog, t time.Time) string {
+		'H': func(r *http.Request, wl *writerLog, t time.Time, _ time.Duration) string { return r.Proto },
+		'I': func(r *http.Request, wl *writerLog, t time.Time, _ time.Duration) string {
 			return strconv.FormatUint(uint64(r.Body.(*bodySizeReader).length.Load()), 10)
 		},
-		'l': func(r *http.Request, wl *writerLog, t time.Time) string { return "-" },
-		'm': func(r *http.Request, wl *writerLog, t time.Time) string { return r.Method },
-		'p': func(r *http.Request, wl *writerLog, t time.Time) string {
+		'l': func(r *http.Request, wl *writerLog, t time.Time, _ time.Duration) string { return "-" },
+		'm': func(r *http.Request, wl *writerLog, t time.Time, _ time.Duration) string { return r.Method },
+		'p': func(r *http.Request, wl *writerLog, t time.Time, _ time.Duration) string {
 			host := r.Host
 			if _, port, err := net.SplitHostPort(host); err == nil && port != "" {
 				return port
@@ -133,30 +132,32 @@ func logBuilder(format string, r *http.Request, w *writerLog, requestTime time.T
 			}
 			return "80"
 		},
-		'q': func(r *http.Request, wl *writerLog, t time.Time) string {
+		'q': func(r *http.Request, wl *writerLog, t time.Time, _ time.Duration) string {
 			if r.URL.RawQuery > "" {
 				return "?" + r.URL.RawQuery
 			}
 			return ""
 		},
-		'r': func(r *http.Request, wl *writerLog, t time.Time) string {
+		'r': func(r *http.Request, wl *writerLog, t time.Time, _ time.Duration) string {
 			return r.Method + " " + r.RequestURI + " " + r.Proto
 		},
-		's': func(r *http.Request, wl *writerLog, t time.Time) string { return strconv.FormatInt(int64(wl.code), 10) },
-		't': func(r *http.Request, wl *writerLog, t time.Time) string {
+		's': func(r *http.Request, wl *writerLog, t time.Time, _ time.Duration) string {
+			return strconv.FormatInt(int64(wl.code), 10)
+		},
+		't': func(r *http.Request, wl *writerLog, t time.Time, _ time.Duration) string {
 			return t.Format("[02/Jan/2006:15:04:05 -0700]")
 		},
-		'T': func(r *http.Request, wl *writerLog, t time.Time) string {
+		'T': func(r *http.Request, wl *writerLog, t time.Time, requestDuration time.Duration) string {
 			return strconv.FormatInt(int64(requestDuration.Seconds()), 10)
 		},
-		'u': func(r *http.Request, wl *writerLog, t time.Time) string {
+		'u': func(r *http.Request, wl *writerLog, t time.Time, _ time.Duration) string {
 			if user, _, ok := r.BasicAuth(); ok && user != "" {
 				return user
 			}
 			return "-"
 		},
-		'U': func(r *http.Request, wl *writerLog, t time.Time) string { return r.URL.Path },
-		'v': func(r *http.Request, wl *writerLog, t time.Time) string {
+		'U': func(r *http.Request, wl *writerLog, t time.Time, _ time.Duration) string { return r.URL.Path },
+		'v': func(r *http.Request, wl *writerLog, t time.Time, _ time.Duration) string {
 			if host := r.Host; host != "" {
 				h, _, err := net.SplitHostPort(host)
 				if err == nil {
@@ -169,10 +170,15 @@ func logBuilder(format string, r *http.Request, w *writerLog, requestTime time.T
 			}
 			return "-"
 		},
-		'X': func(r *http.Request, wl *writerLog, t time.Time) string { return "-" },
+		'X': func(r *http.Request, wl *writerLog, t time.Time, _ time.Duration) string { return "-" },
 	}
 	directiveMap['h'] = directiveMap['a']
 	directiveMap['V'] = directiveMap['v']
+}
+
+func logBuilder(format string, r *http.Request, w *writerLog, requestTime time.Time, requestDuration time.Duration) string {
+
+	var sb strings.Builder
 
 	for cdx := 0; cdx < len(format); cdx++ {
 		c := format[cdx]
@@ -182,7 +188,7 @@ func logBuilder(format string, r *http.Request, w *writerLog, requestTime time.T
 		}
 
 		if fn, isset := directiveMap[format[cdx+1]]; isset {
-			value, _ := json.Marshal(fn(r, w, requestTime))
+			value, _ := json.Marshal(fn(r, w, requestTime, requestDuration))
 			sb.WriteString(string(value[1 : len(value)-1]))
 			cdx++
 			continue
@@ -213,9 +219,9 @@ func logBuilder(format string, r *http.Request, w *writerLog, requestTime time.T
 					// used when a reverse proxy is pointed to the server
 					// TODO: work out whether this should be worked through headers or a config, or what..
 					// for now just use local as a fallback
-					value = directiveMap['p'](r, w, requestTime)
+					value = directiveMap['p'](r, w, requestTime, requestDuration)
 				case "local":
-					value = directiveMap['p'](r, w, requestTime)
+					value = directiveMap['p'](r, w, requestTime, requestDuration)
 				case "remote":
 					if _, port, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 						value = port
@@ -256,9 +262,9 @@ func logBuilder(format string, r *http.Request, w *writerLog, requestTime time.T
 				case "ms":
 					value = strconv.FormatInt(requestDuration.Milliseconds(), 10)
 				case "us":
-					value = directiveMap['D'](r, w, requestTime)
+					value = directiveMap['D'](r, w, requestTime, requestDuration)
 				case "s":
-					value = directiveMap['T'](r, w, requestTime)
+					value = directiveMap['T'](r, w, requestTime, requestDuration)
 				default:
 
 				}
@@ -275,37 +281,67 @@ func logBuilder(format string, r *http.Request, w *writerLog, requestTime time.T
 	return sb.String()
 }
 
-func Logger[R dispatch.RequestAdapter](format string, logger io.Writer) dispatch.Middleware[R] {
-	wlPool := sync.Pool{
-		New: func() any {
-			return new(writerLog)
+type LoggerData struct {
+	start time.Time
+	wl    *writerLog
+	bsr   *bodySizeReader
+}
+
+type loggerMW[R DispatchLogger] struct {
+	format     string
+	logger     io.Writer
+	writerPool sync.Pool
+	bsrPool    sync.Pool
+}
+
+func (mw *loggerMW[R]) Enter(w http.ResponseWriter, r R) (http.ResponseWriter, R, bool) {
+	data := r.Log()
+	data.start = time.Now()
+	data.wl = mw.writerPool.Get().(*writerLog)
+	data.bsr = mw.bsrPool.Get().(*bodySizeReader)
+
+	data.wl.reset(w)
+	data.bsr.reset(r.Request().Body)
+
+	r.Request().Body = data.bsr
+	return data.wl, r, true
+}
+func (mw *loggerMW[R]) Exit(w http.ResponseWriter, r R) {
+	data := r.Log()
+
+	defer mw.writerPool.Put(data.wl)
+	defer mw.bsrPool.Put(data.bsr)
+	defer data.bsr.ReadCloser.Close()
+
+	duration := time.Since(data.start)
+	data.bsr.isClosed.Store(false)
+	if _, err := io.Copy(io.Discard, data.bsr); err != nil {
+		fmt.Fprintf(mw.logger, "Error reading remainder of request body: %v", err)
+	}
+
+	fmt.Fprint(mw.logger, logBuilder(mw.format, r.Request(), data.wl, data.start, duration))
+
+}
+
+type DispatchLogger interface {
+	dispatch.RequestAdapter
+	Log() *LoggerData
+}
+
+func Logger[R DispatchLogger](format string, logger io.Writer) dispatch.Middleware[R] {
+	mw := &loggerMW[R]{
+		format: format,
+		logger: logger,
+		writerPool: sync.Pool{
+			New: func() any {
+				return new(writerLog)
+			},
+		},
+		bsrPool: sync.Pool{
+			New: func() any {
+				return new(bodySizeReader)
+			},
 		},
 	}
-	bsrPool := sync.Pool{
-		New: func() any {
-			return new(bodySizeReader)
-		},
-	}
-
-	return func(w http.ResponseWriter, r R, next dispatch.Middleware[R]) {
-		start := time.Now()
-		wl := wlPool.Get().(*writerLog)
-		defer wlPool.Put(wl)
-		wl.reset(w)
-
-		bsr := bsrPool.Get().(*bodySizeReader)
-		defer bsrPool.Put(bsr)
-		bsr.reset(r.Request().Body)
-		defer bsr.ReadCloser.Close()
-		r.Request().Body = bsr
-
-		next(wl, r, next)
-		duration := time.Since(start)
-		bsr.isClosed.Store(false)
-		if _, err := io.Copy(io.Discard, bsr); err != nil {
-			fmt.Fprintf(logger, "Error reading remainder of request body: %v", err)
-		}
-
-		fmt.Fprint(logger, logBuilder(format, r.Request(), wl, start, duration))
-	}
+	return mw
 }

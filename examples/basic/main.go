@@ -141,8 +141,31 @@ func must(err error) {
 	}
 }
 
-func main() {
+var users []User
 
+type BasicAuthMiddleware struct{}
+
+func (mw *BasicAuthMiddleware) Enter(w http.ResponseWriter, r *prize.HandlerData[Session, *Request]) (http.ResponseWriter, *prize.HandlerData[Session, *Request], bool) {
+	username, password, ok := r.Request().BasicAuth()
+	if ok {
+		// Does this username exist?
+		if udx := slices.IndexFunc(users, func(user User) bool {
+			return user.Username == username && user.Password == password
+		}); udx > -1 {
+			r.Data.User = &users[udx]
+		} else {
+			w.WriteHeader(http.StatusUnauthorized)
+			return nil, nil, false
+		}
+
+	}
+	return w, r, true
+}
+func (mw *BasicAuthMiddleware) Exit(_ http.ResponseWriter, _ *prize.HandlerData[Session, *Request]) {
+	// noop
+}
+
+func main() {
 	var ctn = dispatch.NewContentTypeNegotiator()
 	must(dispatch.RegisterImplementationToNegotiator[CsvOutputer](ctn, "text/csv"))
 	must(dispatch.RegisterImplementationToNegotiator[HtmlOutputer](ctn, "text/html"))
@@ -150,39 +173,21 @@ func main() {
 
 	server := dispatch.NewServer()
 
-	mux := prize.NewTypedHandler[Session](func() Session {
-		return make(Session)
-	}, func(r *http.Request) *Request {
+	mux := prize.NewTypedHandler[Session](func(r *http.Request) *Request {
 		req := new(Request)
 		req.r = r
 		return req
 	})
 	mux.UseErrorHandler(middleware.Errors[*prize.HandlerData[Session, *Request], ErrorPage](), ctn)
 
-	var users = make(Users, 1)
+	users = make(Users, 1)
 	users[0] = User{
 		Username:  "admin",
 		Password:  "superpass",
 		Birthdate: time.Unix(0, 0),
 	}
 	mux.UseMiddleware(
-		func(w http.ResponseWriter, r *prize.HandlerData[Session, *Request], next dispatch.Middleware[*prize.HandlerData[Session, *Request]]) {
-			// BasicAuth
-			username, password, ok := r.Request().BasicAuth()
-			if ok {
-				// Does this username exist?
-				if udx := slices.IndexFunc(users, func(user User) bool {
-					return user.Username == username && user.Password == password
-				}); udx > -1 {
-					r.Data.User = &users[udx]
-				} else {
-					w.WriteHeader(http.StatusUnauthorized)
-					return
-				}
-
-			}
-			next(w, r, next)
-		},
+		new(BasicAuthMiddleware),
 	)
 
 	var userListFunc dispatch.ContentTypeHandler[*prize.HandlerData[Session, *Request], Users] = func(r *prize.HandlerData[Session, *Request]) (Users, error) {
@@ -238,6 +243,7 @@ func main() {
 			log.Printf("Error performing graceful shutdown: %v", err)
 		}
 		listener.Close()
+
 		os.Exit(0)
 	}()
 	if err := server.Serve(listener); err != http.ErrServerClosed {

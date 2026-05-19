@@ -6,7 +6,7 @@
 
 - **Generic, type-safe request data** — bind strongly-typed request context (`T`) to each incoming request via a user-supplied factory function
 - **Typed Handlers** — Generic `TypedHandler[S, T]` for type-safe request handling with session and custom data support
-- **Session Management** — pluggable `SessionStore` with a configurable initializer; defaults to an in-memory session store
+- **Session Management** — pluggable `SessionStore`; defaults to an in-memory session store
 - **Request Logging** — Apache-style access logging with configurable format directives
 - **Error Handling** — centralized, swappable error handler with panic recovery and stack trace logging
 - **Content Encoding** — support for gzip, deflate, and custom encoders with Content-Type negotiation
@@ -36,7 +36,7 @@ import (
     "github.com/4thPlanet/prize/middleware"
 )
 
-// Define your session type. Must implement middleware.Session interface (Id() string, Load(*http.Request), Save(*http.Request))
+// Define your session type. Must implement middleware.Session interface (Id() string)
 type MySession struct {
     UserID string
 }
@@ -50,9 +50,8 @@ type RequestData struct {
 
 func main() {
     // Create a typed handler.
-    // The first argument is a session initializer; the second extracts typed data from the request.
+    // The argument extracts typed data from the request.
     handler := prize.NewTypedHandler[MySession](
-        func() MySession { return MySession{} },
         func(r *http.Request) RequestData {
             return RequestData{Name: r.URL.Query().Get("name")}
         },
@@ -87,12 +86,11 @@ type TypedHandler[S middleware.Session, T any] struct { ... }
 
 ```go
 func NewTypedHandler[S middleware.Session, T any](
-    sessionInit func() S,
     fn func(*http.Request) T,
 ) *TypedHandler[S, T]
 ```
 
-Creates a new handler. `sessionInit` produces a blank session value; `fn` builds the typed request data from the incoming `*http.Request`.
+Creates a new handler. `fn` builds the typed request data from the incoming `*http.Request`.
 
 #### `UseLog`
 
@@ -100,7 +98,7 @@ Creates a new handler. `sessionInit` produces a blank session value; `fn` builds
 func (mux *TypedHandler[S, T]) UseLog(format string, l io.Writer)
 ```
 
-Override the log format string and output destination. The default format is Apache Combined Log Format (`%h %l %u %t "%r" %s %b`); the default writer is `log.Default().Writer()`.
+Override the log format string and output destination. The default format is Apache Combined Log Format (`%h %l %u %t "%r" %s %b\n`); the default writer is `log.Default().Writer()`.
 
 #### `UseErrorHandler`
 
@@ -124,7 +122,7 @@ Register one or more response content encoders (e.g. gzip).
 #### `UseSessionStore`
 
 ```go
-func (mux *TypedHandler[S, T]) UseSessionStore(store middleware.SessionStore[S], init func() S)
+func (mux *TypedHandler[S, T]) UseSessionStore(store middleware.SessionStore[S])
 ```
 
 Replace the default in-memory session store.
@@ -149,12 +147,18 @@ The context object passed to every route handler. Provides access to the raw req
 ```go
 type HandlerData[S middleware.Session, T any] struct {
     Data    T
-    Session S
     // contains unexported fields
 }
 
+// HandlerData[S, T] implements dispatch.RequestAdapter
 func (d *HandlerData[S, T]) Request() *http.Request
-func (d *HandlerData[S, T]) LoadSession(session S)
+// HandlerData[S, T] implements middleware.SessionAdapter
+func (d *HandlerData[S, T]) GetSession() S
+func (d *HandlerData[S, T]) SetSession(session S)
+// HandlerData[S, T] implements middleware.DispatchEncoder
+func (d *HandlerData[S, T]) Encoder() *middleware.EncodingData
+// HandlerData[S, T] implements middleware.DispatchLogger
+func (d *HandlerData[S, T]) Log() *middleware.LoggerData
 ```
 
 ## Middleware
