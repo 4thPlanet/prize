@@ -7,13 +7,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/4thPlanet/dispatch"
 )
 
-func TestLogBuilder(t *testing.T) {
+func TestLogCompiler(t *testing.T) {
 	for _, test := range []struct {
 		FormatString string
 		Output       string
@@ -176,9 +177,14 @@ func TestLogBuilder(t *testing.T) {
 				test.ModifyWL(wl)
 			}
 
-			got := logBuilder(test.FormatString, req, wl, startTime, duration)
-			if got != test.Output {
-				t.Errorf("format %q: got %q, want %q", test.FormatString, got, test.Output)
+			builders := compile(test.FormatString)
+			var sb strings.Builder
+			for _, fn := range builders {
+				sb.WriteString(fn(req, wl, startTime, duration))
+			}
+
+			if got, want := sb.String(), test.Output; got != want {
+				t.Errorf("format %q: got %q, want %q", test.FormatString, got, want)
 			}
 		})
 	}
@@ -189,7 +195,13 @@ func TestLogBuilder(t *testing.T) {
 		res := httptest.NewRecorder()
 		wl := new(writerLog)
 		wl.ResponseWriter = res
-		got := logBuilder("%{pid}P", req, wl, time.Now(), 0)
+
+		builders := compile("%{pid}P")
+		var sb strings.Builder
+		for _, fn := range builders {
+			sb.WriteString(fn(req, wl, time.Now(), 0))
+		}
+		got := sb.String()
 		if _, err := strconv.Atoi(got); err != nil {
 			t.Errorf("%%{pid}P: expected numeric PID, got %q", got)
 		}

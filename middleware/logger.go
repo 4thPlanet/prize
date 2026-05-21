@@ -176,20 +176,29 @@ func init() {
 	directiveMap['V'] = directiveMap['v']
 }
 
-func logBuilder(format string, r *http.Request, w *writerLog, requestTime time.Time, requestDuration time.Duration) string {
-
-	var sb strings.Builder
+func compile(format string) []func(*http.Request, *writerLog, time.Time, time.Duration) string {
+	builders := []func(*http.Request, *writerLog, time.Time, time.Duration) string{}
 
 	for cdx := 0; cdx < len(format); cdx++ {
 		c := format[cdx]
-		if c != '%' || cdx+1 == len(format) {
-			sb.WriteByte(c)
+		if c == '%' && cdx+1 == len(format) {
+			builders = append(builders, func(r *http.Request, wl *writerLog, t time.Time, d time.Duration) string { return string('%') })
+			continue
+		} else if c != '%' {
+			start := cdx
+			for ; cdx < len(format) && format[cdx] != '%'; cdx++ {
+			}
+			static := format[start:cdx]
+			cdx--
+			builders = append(builders, func(r *http.Request, wl *writerLog, t time.Time, d time.Duration) string { return string(static) })
 			continue
 		}
 
 		if fn, isset := directiveMap[format[cdx+1]]; isset {
-			value, _ := json.Marshal(fn(r, w, requestTime, requestDuration))
-			sb.WriteString(string(value[1 : len(value)-1]))
+			builders = append(builders, func(r *http.Request, wl *writerLog, t time.Time, d time.Duration) string {
+				value, _ := json.Marshal(fn(r, wl, t, d))
+				return string(value[1 : len(value)-1])
+			})
 			cdx++
 			continue
 		}
@@ -198,87 +207,122 @@ func logBuilder(format string, r *http.Request, w *writerLog, requestTime time.T
 		if paramDirectiveMatch != nil {
 			param := format[paramDirectiveMatch[2]+cdx+1 : paramDirectiveMatch[3]+cdx+1]
 			directive := format[paramDirectiveMatch[4]+cdx+1]
-			var value string
+
 			switch directive {
 			case 'i':
-				value = r.Header.Get(param)
+				builders = append(builders, func(r *http.Request, wl *writerLog, t time.Time, d time.Duration) string {
+					value, _ := json.Marshal(r.Header.Get(param))
+					return string(value[1 : len(value)-1])
+				})
 			case 'o':
-				value = w.ResponseWriter.Header().Get(param)
+				builders = append(builders, func(r *http.Request, wl *writerLog, t time.Time, d time.Duration) string {
+					value, _ := json.Marshal(wl.ResponseWriter.Header().Get(param))
+					return string(value[1 : len(value)-1])
+				})
+
 			case 't':
-				value = requestTime.Format(param)
+				builders = append(builders, func(r *http.Request, wl *writerLog, t time.Time, d time.Duration) string {
+					value, _ := json.Marshal(t.Format(param))
+					return string(value[1 : len(value)-1])
+				})
+
 			case 'C':
-				cookie, err := r.Cookie(param)
-				if err == nil {
-					value = cookie.Value
-				}
-			case 'e':
-				value = os.Getenv(param)
-			case 'p':
-				switch param {
-				case "canonical":
-					// used when a reverse proxy is pointed to the server
-					// TODO: work out whether this should be worked through headers or a config, or what..
-					// for now just use local as a fallback
-					value = directiveMap['p'](r, w, requestTime, requestDuration)
-				case "local":
-					value = directiveMap['p'](r, w, requestTime, requestDuration)
-				case "remote":
-					if _, port, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-						value = port
+				builders = append(builders, func(r *http.Request, wl *writerLog, t time.Time, d time.Duration) string {
+					cookie, err := r.Cookie(param)
+					if err == nil {
+						value, _ := json.Marshal(cookie.Value)
+						return string(value[1 : len(value)-1])
 					}
-				default:
-					value = "-"
-				}
+					return ""
+				})
+			case 'e':
+				builders = append(builders, func(r *http.Request, wl *writerLog, t time.Time, d time.Duration) string {
+					value, _ := json.Marshal(os.Getenv(param))
+					return string(value[1 : len(value)-1])
+				})
+			case 'p':
+				builders = append(builders, func(r *http.Request, wl *writerLog, t time.Time, d time.Duration) string {
+					var value []byte
+					switch param {
+					case "canonical":
+						// used when a reverse proxy is pointed to the server
+						// TODO: work out whether this should be worked through headers or a config, or what..
+						// for now just use local as a fallback
+						value, _ = json.Marshal(directiveMap['p'](r, wl, t, d))
+					case "local":
+						value, _ = json.Marshal(directiveMap['p'](r, wl, t, d))
+					case "remote":
+
+						if _, port, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+							value, _ = json.Marshal(port)
+						} else {
+							value = []byte(`"-"`)
+						}
+					default:
+						value = []byte(`"-"`)
+					}
+
+					return string(value[1 : len(value)-1])
+				})
+
 			case 'P':
 				// process ID or thread ID of the server serving the request
-				switch param {
-				case "pid":
-					value = strconv.FormatInt(int64(os.Getpid()), 10)
-				case "tid", "hextid":
-					// best we can do for thread id is the goroutine id...you really shouldn't use this...
-					var buf [64]byte
-					runtime.Stack(buf[:], false)
-					if !bytes.HasPrefix(buf[:], []byte("goroutine ")) {
-						value = "0"
-					} else {
-						id := int64(0)
-						for _, digit := range buf[10:] {
-							if digit < '0' || digit > '9' {
-								break
-							}
-							id = id*10 + int64(digit-'0')
-						}
-						if param == "tid" {
-							value = strconv.FormatInt(id, 10)
+				builders = append(builders, func(r *http.Request, wl *writerLog, t time.Time, d time.Duration) string {
+					var value []byte
+					switch param {
+					case "pid":
+						value, _ = json.Marshal(strconv.FormatInt(int64(os.Getpid()), 10))
+					case "tid", "hextid":
+						// best we can do for thread id is the goroutine id...you really shouldn't use this...
+						var buf [64]byte
+						runtime.Stack(buf[:], false)
+						if !bytes.HasPrefix(buf[:], []byte("goroutine ")) {
+							value = []byte("0")
 						} else {
-							value = strconv.FormatInt(id, 16)
+							id := int64(0)
+							for _, digit := range buf[10:] {
+								if digit < '0' || digit > '9' {
+									break
+								}
+								id = id*10 + int64(digit-'0')
+							}
+							if param == "tid" {
+								value, _ = json.Marshal(strconv.FormatInt(id, 10))
+							} else {
+								value, _ = json.Marshal(strconv.FormatInt(id, 16))
+							}
 						}
+					default:
+						value = []byte(`"-"`)
 					}
-				default:
-					value = "-"
-				}
+
+					return string(value[1 : len(value)-1])
+				})
+
 			case 'T':
 				switch param {
 				case "ms":
-					value = strconv.FormatInt(requestDuration.Milliseconds(), 10)
+					builders = append(builders, func(r *http.Request, wl *writerLog, t time.Time, d time.Duration) string {
+						return strconv.FormatInt(d.Milliseconds(), 10)
+					})
 				case "us":
-					value = directiveMap['D'](r, w, requestTime, requestDuration)
+					builders = append(builders, directiveMap['D'])
 				case "s":
-					value = directiveMap['T'](r, w, requestTime, requestDuration)
+					builders = append(builders, directiveMap['T'])
 				default:
 
 				}
 			default:
-				value = format[paramDirectiveMatch[0]+cdx : paramDirectiveMatch[1]+cdx]
+				static, _ := json.Marshal(format[paramDirectiveMatch[0]+cdx : paramDirectiveMatch[1]+cdx])
+				static = static[1 : len(static)-1]
+				builders = append(builders, func(r *http.Request, wl *writerLog, t time.Time, d time.Duration) string {
+					return string(static)
+				})
 			}
-			encoded, _ := json.Marshal(value)
-			sb.WriteString(string(encoded[1 : len(encoded)-1]))
 			cdx += paramDirectiveMatch[1]
 		}
-
 	}
-
-	return sb.String()
+	return builders
 }
 
 type LoggerData struct {
@@ -288,10 +332,10 @@ type LoggerData struct {
 }
 
 type loggerMW[R DispatchLogger] struct {
-	format     string
 	logger     io.Writer
 	writerPool sync.Pool
 	bsrPool    sync.Pool
+	builders   []func(*http.Request, *writerLog, time.Time, time.Duration) string
 }
 
 func (mw *loggerMW[R]) Enter(w http.ResponseWriter, r R) (http.ResponseWriter, R, bool) {
@@ -319,7 +363,11 @@ func (mw *loggerMW[R]) Exit(w http.ResponseWriter, r R) {
 		fmt.Fprintf(mw.logger, "Error reading remainder of request body: %v", err)
 	}
 
-	fmt.Fprint(mw.logger, logBuilder(mw.format, r.Request(), data.wl, data.start, duration))
+	var sb strings.Builder
+	for _, fn := range mw.builders {
+		sb.WriteString(fn(r.Request(), data.wl, data.start, duration))
+	}
+	fmt.Fprint(mw.logger, sb.String())
 
 }
 
@@ -330,7 +378,6 @@ type DispatchLogger interface {
 
 func Logger[R DispatchLogger](format string, logger io.Writer) dispatch.Middleware[R] {
 	mw := &loggerMW[R]{
-		format: format,
 		logger: logger,
 		writerPool: sync.Pool{
 			New: func() any {
@@ -342,6 +389,7 @@ func Logger[R DispatchLogger](format string, logger io.Writer) dispatch.Middlewa
 				return new(bodySizeReader)
 			},
 		},
+		builders: compile(format),
 	}
 	return mw
 }
