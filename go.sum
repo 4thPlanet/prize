@@ -1,5 +1,5 @@
-github.com/4thPlanet/dispatch v0.0.0-20260511030824-f7b274bdf325 h1:DkGD9/yWRWAqbw3/nN5ioM5l6+aD7HcdG18WZI4W7bc=
-github.com/4thPlanet/dispatch v0.0.0-20260511030824-f7b274bdf325/go.mod h1:u8FQst2+QQ6n2FUKhyglUAZdU/siKDIpijyAQA2HpMw=
+github.com/4thPlanet/dispatch v0.0.0-20260522155855-e8b7b24fca7a h1:zspq+nUE5aeAYUrEU/dJ+aUok/xfAKpqsUSuL0vyq/A=
+github.com/4thPlanet/dispatch v0.0.0-20260522155855-e8b7b24fca7a/go.mod h1:u8FQst2+QQ6n2FUKhyglUAZdU/siKDIpijyAQA2HpMw=
 github.com/gobwas/httphead v0.1.0 h1:exrUm0f4YX0L7EBwZHuCF4GDp8aJfVeBrlLQrs6NqWU=
 github.com/gobwas/httphead v0.1.0/go.mod h1:O/RXo79gxV8G+RqlR/otEwx4Q36zl9rqC5u12GKvMCM=
 github.com/gobwas/pool v0.2.1 h1:xfeeEhW7pwmX8nuLVlqbzVc7udMDrwetjEv+TZIz1og=
@@ -7,5 +7,5 @@ github.com/gobwas/pool v0.2.1/go.mod h1:q8bcK0KcYlCgd9e7WYLm9LpyS+YeLd8JVDW6Wezm
 github.com/gobwas/ws v1.4.0 h1:CTaoG1tojrh4ucGPcoJFiAQUAsEWekEWvLy7GsVNqGs=
 github.com/gobwas/ws v1.4.0/go.mod h1:G3gNqMNtPppf5XUz7O4shetPpcZ1VJ7zt18dlUeakrc=
 golang.org/x/sys v0.6.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
-golang.org/x/sys v0.44.0 h1:ildZl3J4uzeKP07r2F++Op7E9B29JRUy+a27EibtBTQ=
-golang.org/x/sys v0.44.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
+golang.org/x/sys v0.45.0 h1:dO4czNzziLiiXplLQgBCEpCvXQ3dnkn0SdaZSYdQ+FY=
+golang.org/x/sys v0.45.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
