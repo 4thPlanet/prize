@@ -2,7 +2,7 @@ module github.com/4thPlanet/prize
 
 go 1.26.1
 
-require github.com/4thPlanet/dispatch v0.0.0-20260522155855-e8b7b24fca7a
+require github.com/4thPlanet/dispatch v0.0.0-20260523034233-effb7f78ddce
 
 require (
 	github.com/gobwas/httphead v0.1.0 // indirect
