@@ -1,5 +1,5 @@
-github.com/4thPlanet/dispatch v0.0.0-20260817010229-6cc6118cd74b h1:eu9Ngq1LPp1JdVEOtXviVwfkW/xOK//sD0BoVALbD04=
-github.com/4thPlanet/dispatch v0.0.0-20260817010229-6cc6118cd74b/go.mod h1:u8FQst2+QQ6n2FUKhyglUAZdU/siKDIpijyAQA2HpMw=
+github.com/4thPlanet/dispatch v0.0.0-20260823175634-99c99452ee9f h1:FpnSMtpkFodWYykvJiecaNE6KghSg3yen0wnqNksH2Q=
+github.com/4thPlanet/dispatch v0.0.0-20260823175634-99c99452ee9f/go.mod h1:u8FQst2+QQ6n2FUKhyglUAZdU/siKDIpijyAQA2HpMw=
 github.com/gobwas/httphead v0.1.0 h1:exrUm0f4YX0L7EBwZHuCF4GDp8aJfVeBrlLQrs6NqWU=
 github.com/gobwas/httphead v0.1.0/go.mod h1:O/RXo79gxV8G+RqlR/otEwx4Q36zl9rqC5u12GKvMCM=
 github.com/gobwas/pool v0.2.1 h1:xfeeEhW7pwmX8nuLVlqbzVc7udMDrwetjEv+TZIz1og=

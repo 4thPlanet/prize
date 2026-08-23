@@ -41,8 +41,8 @@ func (ew *encodingWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	} else {
 		return nil, nil, errors.New("Hijacker is not available.")
 	}
-
 }
+
 func (ew *encodingWriter) reset(w http.ResponseWriter) {
 	ew.ResponseWriter = w
 	ew.write = nil
@@ -129,6 +129,7 @@ func (mw *encodingMW[R]) negotiateEncoding(acceptHeader string) string {
 }
 
 func (mw *encodingMW[R]) Enter(w http.ResponseWriter, r R) (http.ResponseWriter, R, bool) {
+	w.Header().Add("Vary", "Accept-Encoding")
 	data := r.Encoder()
 
 	acceptedEncoding := mw.negotiateEncoding(r.Request().Header.Get("Accept-Encoding"))
@@ -152,7 +153,6 @@ func (mw *encodingMW[R]) Enter(w http.ResponseWriter, r R) (http.ResponseWriter,
 	}
 
 	data.encoding = encoding
-
 	return wrappedWriter, r, true
 }
 func (mw *encodingMW[R]) Exit(w http.ResponseWriter, r R) {
@@ -173,7 +173,8 @@ func (mw *encodingMW[R]) Exit(w http.ResponseWriter, r R) {
 func ContentEncoding[R DispatchEncoder](withProviders ...ContentEncoder) dispatch.Middleware[R] {
 	gzipPool := &sync.Pool{
 		New: func() any {
-			return new(gzip.Writer)
+			w, _ := gzip.NewWriterLevel(io.Discard, gzip.DefaultCompression)
+			return w
 		},
 	}
 	deflatePool := &sync.Pool{

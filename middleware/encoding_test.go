@@ -110,6 +110,9 @@ func TestEncoding(t *testing.T) {
 					if got, want := res.Code, test.Code; got != want {
 						t.Errorf("Unexpected response code. Got: %v, Want: %v", got, want)
 					}
+					if got, want := res.Header().Get("Vary"), "Accept-Encoding"; got != want {
+						t.Errorf("Unexpected Vary header. Got: %v, Want: %v", got, want)
+					}
 					if res.Code == http.StatusOK {
 						if got, want := res.Header().Get("Content-Encoding"), test.ExpectedEncoding; got != want {
 							t.Errorf("Unexpected Content-Encoding header. Got: %v, Want: %v", got, want)
