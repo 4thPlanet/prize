@@ -29,6 +29,11 @@ func (ew *encodingWriter) Write(in []byte) (int, error) {
 func (ew *encodingWriter) Flush() {
 	if ew.flush != nil {
 		ew.flush()
+
+		if f, ok := ew.ResponseWriter.(http.Flusher); ok {
+			f.Flush()
+		}
+
 	} else {
 		if f, ok := ew.ResponseWriter.(http.Flusher); ok {
 			f.Flush()
